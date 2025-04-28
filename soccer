@@ -80,3 +80,44 @@ class AutoPreprocessor:
         
         self.df[num_cols] = self.scaler.fit_transform(self.df[num_cols])
         print(f" - {list(num_cols)} 컬럼 정규화 완료")
+
+    def create_features(self):
+        print("\n [6] 파생변수 생성")
+        num_cols = self.df.select_dtypes(include=np.number).columns
+        if self.target_col and self.target_col in num_cols:
+            num_cols = num_cols.drop(self.target_col)
+
+        if len(num_cols) >= 2:
+            # 여러 점수의 평균 같은 거 만들기
+            self.df['feature_avg'] = self.df[num_cols].mean(axis=1)
+            print(" - feature_avg (수치형 평균) 생성 완료")
+        else:
+            print(" - 파생변수 생성 생략 (수치형 컬럼 부족)")
+    
+    def save_files(self, output_dir="output"):
+        print("\n [7] 파일 저장 및 README 생성")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        
+        output_file = os.path.join(output_dir, os.path.basename(self.file_path).replace(".csv", "_cleaned.csv"))
+        self.df.to_csv(output_file, index=False)
+        
+        readme_content = (
+            f"본 데이터는 결측치 처리, 범주형 인코딩, 수치형 정규화, "
+            f"파생변수(feature_avg) 생성 과정을 거쳐 전처리되었습니다. "
+            f"최종 파일은 {os.path.basename(output_file)} 입니다."
+        )
+        with open(os.path.join(output_dir, "README.txt"), "w") as f:
+            f.write(readme_content)
+        
+        print(f" - 전처리 파일 저장: {output_file}")
+        print(f" - README.txt 저장 완료")
+    
+    def run_all(self):
+        self.basic_info()
+        self.handle_missing()
+        self.detect_outliers()
+        self.encode_categoricals()
+        self.normalize_numeric()
+        self.create_features()
+        self.save_files()

@@ -121,3 +121,7 @@ class AutoPreprocessor:
         self.normalize_numeric()
         self.create_features()
         self.save_files()
+
+
+processor = AutoPreprocessor(file_path='/content/5_SOCCER.csv', target_col='Value')
+processor.run_all()

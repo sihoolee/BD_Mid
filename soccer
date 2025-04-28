@@ -1,127 +1,98 @@
 import pandas as pd
 import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import LabelEncoder, StandardScaler
 import os
+from sklearn.preprocessing import LabelEncoder, MinMaxScaler
 
 class AutoPreprocessor:
-    def __init__(self, file_path, target_col=None):
-        """
-        file_path : CSV 파일 경로
-        target_col : 타겟 컬럼 이름 (없으면 None)
-        """
+    def __init__(self, file_path, target_col):
         self.file_path = file_path
         self.target_col = target_col
         self.df = pd.read_csv(file_path)
-        self.scaler = StandardScaler()
-        self.report = ""
-
-    def basic_info(self):
-        print(" [1] 데이터 기본 정보")
-        print(self.df.head())
-        print(self.df.info())
-        print(self.df.describe())
+        self.output_dir = '/content/output'
+        os.makedirs(self.output_dir, exist_ok=True)
 
     def handle_missing(self):
-        print("\n [2] 결측치 처리")
-        missing_cols = self.df.columns[self.df.isnull().any()]
-        if len(missing_cols) == 0:
-            print(" - 결측치 없음")
-        else:
-            for col in missing_cols:
+        for col in self.df.columns:
+            if self.df[col].isnull().sum() > 0:
                 if self.df[col].dtype == 'object':
-                    mode_val = self.df[col].mode()[0]
-                    self.df[col].fillna(mode_val, inplace=True)
-                    print(f" - {col}: 최빈값 '{mode_val}'로 채움")
+                    self.df[col].fillna(self.df[col].mode()[0], inplace=True)
                 else:
-                    median_val = self.df[col].median()
-                    self.df[col].fillna(median_val, inplace=True)
-                    print(f" - {col}: 중앙값 {median_val}로 채움")
+                    self.df[col].fillna(self.df[col].median(), inplace=True)
 
     def detect_outliers(self):
-        print("\n [3] 이상치 탐지 (간단 시각화)")
-        num_cols = self.df.select_dtypes(include=np.number).columns
-        if len(num_cols) == 0:
-            print(" - 수치형 컬럼 없음")
-            return
-        
-        fig, axes = plt.subplots(1, min(3, len(num_cols)), figsize=(5 * min(3, len(num_cols)), 5))
-        if len(num_cols) == 1:
-            axes = [axes]
-        for idx, col in enumerate(num_cols[:3]):
-            sns.boxplot(y=self.df[col], ax=axes[idx])
-            axes[idx].set_title(f'Boxplot of {col}')
-        plt.tight_layout()
-        plt.show()
-        print(" - 극단 이상치가 보이면 추가 조치 필요 (현재 자동 제거는 하지 않음)")
+        numeric_cols = self.df.select_dtypes(include=[np.number]).columns
+        initial_rows = self.df.shape[0]
+    
+        for col in numeric_cols:
+            Q1 = self.df[col].quantile(0.25)
+            Q3 = self.df[col].quantile(0.75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            self.df = self.df[(self.df[col] >= lower_bound) & (self.df[col] <= upper_bound)]
 
-    def encode_categoricals(self):
-        print("\n [4] 범주형 인코딩")
-        cat_cols = self.df.select_dtypes(include='object').columns
-        if len(cat_cols) == 0:
-            print(" - 범주형 컬럼 없음")
-            return
-        
-        le = LabelEncoder()
-        for col in cat_cols:
-            self.df[col] = le.fit_transform(self.df[col])
-            print(f" - {col}: Label Encoding 적용 완료")
+    # 만약 제거 후 데이터가 50% 이상 줄었거나, 데이터가 0개가 되면 → 이상치 제거 취소
+        if self.df.shape[0] < initial_rows * 0.5 or self.df.shape[0] == 0:
+            print("이상치 제거로 데이터가 너무 줄어들어 원래 데이터로 복구합니다.")
+            self.df = pd.read_csv(self.file_path)
 
-    def normalize_numeric(self):
-        print("\n [5] 수치형 정규화")
-        num_cols = self.df.select_dtypes(include=np.number).columns
-        if self.target_col and self.target_col in num_cols:
-            num_cols = num_cols.drop(self.target_col)
+    def encode_features(self):
+        for col in self.df.columns:
+            if self.df[col].dtype == 'object' and col != self.target_col:
+                le = LabelEncoder()
+                self.df[col] = le.fit_transform(self.df[col])
 
-        if len(num_cols) == 0:
-            print(" - 정규화할 수치형 컬럼 없음")
-            return
-        
-        self.df[num_cols] = self.scaler.fit_transform(self.df[num_cols])
-        print(f" - {list(num_cols)} 컬럼 정규화 완료")
+    def normalize_data(self):
+        numeric_cols = self.df.select_dtypes(include=[np.number]).columns
+        numeric_cols = [col for col in numeric_cols if col != self.target_col]
+        scaler = MinMaxScaler()
+        self.df[numeric_cols] = scaler.fit_transform(self.df[numeric_cols])
 
     def create_features(self):
-        print("\n [6] 파생변수 생성")
-        num_cols = self.df.select_dtypes(include=np.number).columns
-        if self.target_col and self.target_col in num_cols:
-            num_cols = num_cols.drop(self.target_col)
+        if 'Age' in self.df.columns:
+            self.df['Age_category'] = pd.cut(self.df['Age'], bins=[0, 20, 40, 60, 80, 100], labels=False)
 
-        if len(num_cols) >= 2:
-            # 여러 점수의 평균 같은 거 만들기
-            self.df['feature_avg'] = self.df[num_cols].mean(axis=1)
-            print(" - feature_avg (수치형 평균) 생성 완료")
-        else:
-            print(" - 파생변수 생성 생략 (수치형 컬럼 부족)")
-    
-    def save_files(self, output_dir="output"):
-        print("\n [7] 파일 저장 및 README 생성")
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+    def remove_duplicates(self):
+        self.df.drop_duplicates(inplace=True)
+
+    def save_outputs(self):
+        base_filename = os.path.basename(self.file_path).replace('.csv', '')
+        output_path = f"{self.output_dir}/{base_filename}_cleaned.csv"
+        self.df.to_csv(output_path, index=False)
         
-        output_file = os.path.join(output_dir, os.path.basename(self.file_path).replace(".csv", "_cleaned.csv"))
-        self.df.to_csv(output_file, index=False)
-        
-        readme_content = (
-            f"본 데이터는 결측치 처리, 범주형 인코딩, 수치형 정규화, "
-            f"파생변수(feature_avg) 생성 과정을 거쳐 전처리되었습니다. "
-            f"최종 파일은 {os.path.basename(output_file)} 입니다."
-        )
-        with open(os.path.join(output_dir, "README.txt"), "w") as f:
+        readme_content = f"전처리 완료: 결측치 처리, 이상치 제거, 범주형 인코딩, 정규화 수행. 파일명: {base_filename}_cleaned.csv"
+        with open(f"{self.output_dir}/README.txt", 'w') as f:
             f.write(readme_content)
         
-        print(f" - 전처리 파일 저장: {output_file}")
-        print(f" - README.txt 저장 완료")
-    
+        print(f"파일 저장 완료: {output_path} 및 README.txt")
+
     def run_all(self):
-        self.basic_info()
+        print("1. 결측치 처리 중...")
         self.handle_missing()
+        print("2. 이상치 제거 중...")
         self.detect_outliers()
-        self.encode_categoricals()
-        self.normalize_numeric()
+        print("3. 범주형 변수 인코딩 중...")
+        self.encode_features()
+        print("4. 정규화 중...")
+        self.normalize_data()
+        print("5. 파생 변수 생성 중...")
         self.create_features()
-        self.save_files()
+        print("6. 중복 제거 중...")
+        self.remove_duplicates()
+        print("7. 파일 저장 중...")
+        self.save_outputs()
 
+#------
 
-processor = AutoPreprocessor(file_path='/content/5_SOCCER.csv', target_col='Value')
+processor = AutoPreprocessor(file_path='5_SOCCER.csv', target_col='Value')
 processor.run_all()
+
+#------
+
+import os
+print(os.listdir('/content/output'))  # output 폴더 안 파일 목록 확인!
+
+# 파일 다운로드
+from google.colab import files
+files.download('/content/output/5_SOCCER_cleaned.csv')  # 전처리된 CSV
+files.download('/content/output/README.txt')            # 전처리 요약 파일
